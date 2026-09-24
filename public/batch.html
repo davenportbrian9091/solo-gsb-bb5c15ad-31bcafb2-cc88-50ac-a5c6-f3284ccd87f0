@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>批量装配 · 齿轮组选配</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <nav class="topnav">
+    <a href="index.html">单台选配</a>
+    <a href="batch.html" class="active">批量装配（2～3 台）</a>
+  </nav>
+  <header class="site-header">
+    <h1>🔩 批量装配</h1>
+    <p class="subtitle">一次为 2～3 台装置分配齿轮 · 共用一份齿轮清单 · 每枚实物齿轮整批至多使用一次</p>
+  </header>
+
+  <main>
+    <form id="batch-form" class="card">
+      <section>
+        <div class="section-head">
+          <h2>1. 装置清单（2～3 台，顺序即输入顺序）</h2>
+          <div class="btn-row">
+            <button type="button" id="btn-device-add" class="btn ghost">＋ 增加装置</button>
+          </div>
+        </div>
+        <div id="device-rows"></div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>2. 共用齿轮清单（2～12 枚）</h2>
+          <div class="btn-row">
+            <button type="button" id="btn-example" class="btn ghost">填入示例</button>
+            <button type="button" id="btn-add" class="btn ghost">＋ 添加齿轮</button>
+          </div>
+        </div>
+        <div class="gear-grid-head">
+          <span>唯一编号</span><span>齿数</span><span></span>
+        </div>
+        <div id="gear-rows"></div>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="btn primary">开始批量装配</button>
+      </div>
+
+      <p id="form-error" class="alert error" hidden></p>
+    </form>
+
+    <section id="result-panel" class="card" hidden>
+      <div class="section-head">
+        <h2>3. 装配结果</h2>
+        <span id="result-summary" class="summary"></span>
+      </div>
+      <p id="batch-opt-note" class="muted"></p>
+      <div id="device-results"></div>
+      <div id="unused-box" class="unused-box"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>优化顺序：达标台数最多 → 总级数最少 → 相对误差之和最小 → 装置顺序 / 齿轮编号自然序</span>
+  </footer>
+
+  <script src="batch.js"></script>
+</body>
+</html>
