@@ -9,13 +9,21 @@
 - 无解时给出明确提示
 - 展示每级配对（编号/齿数）、每级速比、总实际转速比（分数 + 小数）与相对误差
 
+同时支持**批量装配**：一次为 2～3 台装置（各自目标速比与容差）分配同一齿轮清单，
+每枚实物齿轮在整批中至多分配一次，并给出各台的选中配对、未满足状态与未用齿轮。
+
 ## 一键启动（Docker Compose，自动安装依赖并构建）
 
 ```bash
 docker compose up --build
 ```
 
-启动后访问： **http://localhost:3000**
+启动后访问：
+
+| 页面 | 地址 |
+| --- | --- |
+| 单台选配 | **http://localhost:3000/** |
+| 批量装配（2～3 台） | **http://localhost:3000/batch**（或 `/batch.html`） |
 
 后台运行可用 `docker compose up --build -d`，停止用 `docker compose down`。
 
@@ -28,7 +36,7 @@ npm install
 npm start
 ```
 
-访问 http://localhost:3000
+访问 http://localhost:3000 ，批量装配页 http://localhost:3000/batch 。
 
 ## 必要配置（环境变量）
 
@@ -37,13 +45,14 @@ npm start
 | `PORT` | 容器内服务监听端口（一般无需修改） | `3000` |
 | `APP_PORT` | Compose 映射到宿主机的端口，按需覆盖，例如 `APP_PORT=8080 docker compose up --build` | `3000` |
 
-例如改用宿主机 8080 端口：
+两个页面共用同一端口；例如改用宿主机 8080 端口后，访问
+http://localhost:8080 （单台）与 http://localhost:8080/batch （批量）：
 
 ```bash
-APP_PORT=8080 docker compose up --build   # 访问 http://localhost:8080
+APP_PORT=8080 docker compose up --build
 ```
 
-## 使用说明
+## 使用说明 — 单台选配
 
 1. 填写**目标输出转速比**（输出轴 / 输入轴）：支持小数与分数，如 `0.0833`、`1/12`、`4`。
 2. 填写**允许相对误差**：支持百分数 `5%` 或小数 `0.05`（二者等价，表示 5%）；填 `0%` 表示要求精确匹配。
@@ -51,9 +60,32 @@ APP_PORT=8080 docker compose up --build   # 访问 http://localhost:8080
 4. 点击“开始选配”，结果区按排序规则列出达标方案，第一条标记为“最优”。
 5. 若无任何达标组合，页面会明确提示无解，并建议放宽误差或增加齿轮。
 
+## 使用说明 — 批量装配（2～3 台）
+
+1. 在顶部导航进入 **批量装配**（`/batch`）。
+2. 录入一份**共用齿轮清单**（2～12 枚，规则同单台页）。
+3. 添加 **2～3 台装置**：每台填写名称（可空，默认“装置 1/2/3”）、各自的**目标速比**与**容差**。
+4. 点击“开始批量装配”，系统对每台枚举**全部**达标配对（不受单台接口 300 条返回上限影响），
+   按**占用齿轮集合**为每台保留最优候选，再求互不冲突的组合。
+5. 结果区展示：
+   - 汇总：**达标台数 / 总台数、总级数、相对误差之和**；
+   - 每台装置的选中配对（级/主动轮/从动轮/本级速比、实际总速比与误差）或**未满足**状态
+     （区分“本身无任何达标配对”与“配对被整批全局择优占用”）；
+   - **未使用齿轮**清单（整批中未被任何装置占用的齿轮）。
+
+### 批量择优规则
+
+在“每枚齿轮整批至多使用一次”的约束下，组合按以下顺序择优，保证结果唯一确定：
+
+1. **达标台数最多**；
+2. 并列时**总级数最少**；
+3. 再并列时**相对误差之和最小**（精确分数相加比较）；
+4. 最后按**装置输入顺序**逐台决胜：同序号优先让排在前面的装置满足，
+   其选中方案再按齿轮编号**自然序**（`G2` 排在 `G10` 之前）比较。
+
 ## HTTP 接口
 
-`POST /api/search`
+### `POST /api/search`（单台）
 
 ```json
 {
@@ -69,6 +101,32 @@ APP_PORT=8080 docker compose up --build   # 访问 http://localhost:8080
 返回中 `total` 为达标方案总数，`results` 按级数/误差/编号排序后最多返回 300 条
 （`truncated: true` 时表示已截断）；`total: 0` 即无解。
 
+### `POST /api/batch`（批量装配）
+
+```json
+{
+  "gears": [
+    { "id": "G1", "teeth": 10 },
+    { "id": "G8", "teeth": 60 }
+  ],
+  "devices": [
+    { "name": "装置甲", "target": "1/12", "tolerance": "5%" },
+    { "name": "装置乙", "target": "1/6", "tolerance": "5%" }
+  ]
+}
+```
+
+- `devices` 必须为 **2～3** 台；`name` 可省略（按顺序默认“装置 N”）。
+- 返回：
+  - `matchedCount` / `deviceCount`：达标台数 / 总台数；
+  - `totalStages`、`errorSum`（+ `errorSumPercent`）：总级数与相对误差之和；
+  - `devices[]`：逐台给出 `target`、`tolerance`、
+    `totalMatches`（该台**全量**达标方案数，未截断）、
+    `candidateCount`（按占用齿轮集合去重后的候选数）、
+    `matched` 与 `solution`（结构同单台结果；未满足时为 `null`）；
+  - `unusedGears`：未被任何装置占用的齿轮。
+- 批量分配直接基于完整枚举（全量达标配对），**不会**只取 `/api/search` 截断后的前 300 条。
+
 ## 计算与排序规则
 
 - 每级转速比 = 主动轮齿数 / 从动轮齿数；总速比 = 各级速比之积（全程约分分数）。
@@ -82,13 +140,16 @@ APP_PORT=8080 docker compose up --build   # 访问 http://localhost:8080
 ```
 .
 ├── Dockerfile              # 多平台 Node 20 Alpine 镜像，构建时安装依赖
-├── docker-compose.yml      # 一键启动服务
+├── docker-compose.yml      # 一键启动服务（单台页与批量页同端口）
 ├── package.json
 ├── src
-│   ├── server.js           # Express 服务：静态页面 + /api/search
-│   └── search.js           # 精确分数搜索算法（BigInt）
+│   ├── server.js           # Express 服务：静态页面 + /api/search + /api/batch
+│   ├── search.js           # 精确分数搜索算法（BigInt）：完整枚举与单台搜索
+│   └── batch.js            # 批量装配：按集合留优 + 互不冲突组合的分支限界搜索
 └── public
-    ├── index.html          # 原生前端页面
+    ├── index.html          # 单台选配页面
+    ├── batch.html          # 批量装配页面（/batch）
     ├── styles.css
-    └── app.js
+    ├── app.js              # 单台页脚本
+    └── batch.js            # 批量页脚本
 ```

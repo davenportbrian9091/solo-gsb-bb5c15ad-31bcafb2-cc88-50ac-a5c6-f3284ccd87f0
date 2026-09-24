@@ -37,10 +37,6 @@ function makeFrac(num, den) {
   return { num: num / g, den: den / g };
 }
 
-function mulFrac(a, b) {
-  return makeFrac(a.num * b.num, a.den * b.den);
-}
-
 /**
  * 解析十进制数字串（允许前导符号、小数点），返回约分分数。
  * 不接受科学计数法。
@@ -147,7 +143,9 @@ function* combinations(n, k) {
  * 每枚齿轮恰好出现一次；每对按 (最小未用轮, 其它未用轮) 锚定，两个朝向
  * （谁主动/谁从动）都枚举，保证不重不漏。
  *
- * 返回 [{ drive: gear, driven: gear }] × k
+ * gears 已按编号自然序排序，因此锚点直接取剩余中的最小下标即可。
+ *
+ * 返回 [{ driveIndex, drivenIndex }] × k
  */
 function* pairings(gears, subset) {
   const pair = new Array(subset.length / 2);
@@ -157,10 +155,11 @@ function* pairings(gears, subset) {
       yield pair.slice();
       return;
     }
-    // 剩余中自然序最小者作为锚点，消除“同一组对”的排列重复
-    let anchor = null;
+    // 剩余中下标最小者作为锚点（gears 已按编号自然序排列），
+    // 消除“同一组对”的排列重复
+    let anchor = -1;
     for (const gi of remaining) {
-      if (anchor === null || naturalCmp(gears[gi].id, gears[anchor].id) < 0) anchor = gi;
+      if (anchor < 0 || gi < anchor) anchor = gi;
     }
     for (const partner of remaining) {
       if (partner === anchor) continue;
@@ -178,17 +177,75 @@ function* pairings(gears, subset) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 方案比较                                                            */
+/* ------------------------------------------------------------------ */
+
+/** 比较级序列 [[driveIndex, drivenIndex], ...]（索引序即齿轮编号自然序） */
+function cmpIdxs(a, b) {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    if (x.driveIndex !== y.driveIndex) return x.driveIndex - y.driveIndex;
+    if (x.drivenIndex !== y.drivenIndex) return x.drivenIndex - y.drivenIndex;
+  }
+  return 0;
+}
+
+/** 单台方案排序：级数最少 → 误差最小 → 齿轮编号序列自然序 */
+function cmpSolutions(a, b) {
+  if (a.stages !== b.stages) return a.stages - b.stages;
+  const ea = a.error.num * b.error.den;
+  const eb = b.error.num * a.error.den;
+  if (ea !== eb) return ea < eb ? -1 : 1;
+  return cmpIdxs(a.idxs, b.idxs);
+}
+
+/**
+ * 将轻量方案（仅含齿轮下标）展开为带编号/齿数的富对象，供接口与前端展示。
+ */
+function enrichMatch(m, gears) {
+  const pairs = m.idxs.map((p) => {
+    const d = gears[p.driveIndex];
+    const w = gears[p.drivenIndex];
+    return {
+      drive: { id: d.id, teeth: d.teeth },
+      driven: { id: w.id, teeth: w.teeth },
+      stageRatio: makeFrac(BigInt(d.teeth), BigInt(w.teeth)),
+    };
+  });
+  // idxs 中每枚齿轮恰好出现一次（pairings 保证）；按下标升序收集，
+  // 而 gears 已按编号自然序排列，即占用齿轮集合的自然序
+  const gearIds = m.idxs
+    .flatMap((p) => [p.driveIndex, p.drivenIndex])
+    .sort((a, b) => a - b)
+    .map((gi) => gears[gi].id);
+  return {
+    stages: m.stages,
+    ratio: m.ratio,
+    error: m.error,
+    pairs,
+    flatIds: pairs.map((p) => [p.drive.id, p.driven.id]),
+    gearIds,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* 主搜索                                                              */
 /* ------------------------------------------------------------------ */
 
 /**
+ * 枚举全部达标方案（不截断、不排序）。
+ * 批量装配必须基于完整枚举结果分配，不能使用 search() 截断后的前 300 条。
+ *
  * @param {Array<{id:string,teeth:number}>} gears 现有齿轮（2~12 枚，编号唯一）
  * @param {{num:bigint,den:bigint}} target 目标输出转速比（正分数）
  * @param {{num:bigint,den:bigint}} tolerance 允许相对误差（非负分数）
- * @returns {{results:Array,total:number,truncated:boolean}}
+ * @returns {Array<{stages:number,ratio:{num:bigint,den:bigint},error:object,idxs:Array<{driveIndex:number,drivenIndex:number}>}>}
  */
-function search(gears, target, tolerance) {
-  /** 扁平编号序列，用于方案去重（同一配对集合+朝向，仅对顺序不同，只保留一条） */
+function enumerateMatches(gears, target, tolerance) {
+  /** 规范化配对索引序列的去重集合（同一配对集合+朝向，仅级顺序不同，只保留一条） */
   const seen = new Set();
   /** @type {Array<{stages:number,error:{num:bigint,den:bigint}}>} */
   const matches = [];
@@ -197,70 +254,66 @@ function search(gears, target, tolerance) {
     if (2 * k > gears.length) break;
 
     for (const subset of combinations(gears.length, 2 * k)) {
-      for (const rawPairs of pairings(gears, subset)) {
-        // 各级累计实际转速比（精确分数）
-        let ratio = { num: 1n, den: 1n };
-        const pairs = rawPairs.map((p) => {
-          const d = gears[p.driveIndex];
-          const w = gears[p.drivenIndex];
-          ratio = mulFrac(ratio, makeFrac(BigInt(d.teeth), BigInt(w.teeth)));
-          return {
-            drive: { id: d.id, teeth: d.teeth },
-            driven: { id: w.id, teeth: w.teeth },
-            stageRatio: { num: BigInt(d.teeth), den: BigInt(w.teeth) },
-          };
-        });
+      for (const idxs of pairings(gears, subset)) {
+        // 实际速比 = ∏ (主动齿/从动齿)，先用未约分的整数分子分母累计，
+        // 达标判定全部走整数乘法不等式，避免对海量候选做 BigInt gcd
+        let rn = 1n;
+        let rd = 1n;
+        for (const p of idxs) {
+          rn *= BigInt(gears[p.driveIndex].teeth);
+          rd *= BigInt(gears[p.drivenIndex].teeth);
+        }
 
-        // 相对误差 = |ratio - target| / target（精确分数）
-        const diff = ratio.num * target.den >= target.num * ratio.den
-          ? makeFrac(ratio.num * target.den - target.num * ratio.den, ratio.den * target.den)
-          : makeFrac(target.num * ratio.den - ratio.num * target.den, ratio.den * target.den);
-        const error = makeFrac(diff.num * target.den, diff.den * target.num);
+        // 相对误差 |r - t|/t = |rn*td - tn*rd| / (rd*tn)，达标条件
+        // |...| * tolDen <= tolNum * tn * rd，全程整数乘法，无需约分
+        const lhs = rn * target.den - target.num * rd;
+        const abs = lhs < 0n ? -lhs : lhs;
+        if (abs * tolerance.den > tolerance.num * target.num * rd) continue;
 
-        // |diff|/target <= tolerance
-        if (error.num * tolerance.den > tolerance.num * error.den) continue;
+        // 至此方案达标：规范化级顺序（按主动轮下标升序，即编号自然序），
+        // 使“仅级顺序不同”的方案归一
+        idxs.sort((a, b) => a.driveIndex - b.driveIndex);
 
-        // 规范化：按主动轮编号自然序排列各级，使“仅级顺序不同”的方案归一
-        pairs.sort((a, b) => naturalCmp(a.drive.id, b.drive.id));
-        const flatIds = pairs.map((p) => `${p.drive.id}>${p.driven.id}`).join('|');
-        if (seen.has(flatIds)) continue;
-        seen.add(flatIds);
+        // Number 位编码的去重键（k 前缀 + 每个级各占 4 位下标），
+        // 齿轮 ≤ 12 枚，索引 < 16；无 BigInt 装箱与字符串开销
+        let key = k;
+        for (const p of idxs) key = (key << 4 | p.driveIndex) << 4 | p.drivenIndex;
+        if (seen.has(key)) continue;
+        seen.add(key);
 
-        matches.push({
-          stages: k,
-          ratio,
-          error,
-          pairs,
-          flatIds: pairs.map((p) => [p.drive.id, p.driven.id]),
-        });
+        // 只对达标方案做约分；内部方案保持轻量（下标+分数），
+        // 富对象延迟到最终展示前构造，降低 GC 压力。
+        // 相对误差 = diff / (rd * tn)（makeFrac 内部约分）
+        const ratio = makeFrac(rn, rd);
+        const error = makeFrac(abs, rd * target.num);
+
+        matches.push({ stages: k, ratio, error, idxs });
       }
     }
   }
 
+  return matches;
+}
+
+/**
+ * 单台搜索：枚举全部达标方案，按 级数 → 误差 → 编号序列 排序，最多返回前 RESULT_LIMIT 条。
+ * @param {Array<{id:string,teeth:number}>} gears 现有齿轮（2~12 枚，编号唯一）
+ * @param {{num:bigint,den:bigint}} target 目标输出转速比（正分数）
+ * @param {{num:bigint,den:bigint}} tolerance 允许相对误差（非负分数）
+ * @returns {{results:Array,total:number,truncated:boolean}}
+ */
+function search(gears, target, tolerance) {
+  const matches = enumerateMatches(gears, target, tolerance);
+
   // 排序：级数最少 → 误差最小 → 齿轮编号序列（各级 主动,从动 依次比较）
-  matches.sort((a, b) => {
-    if (a.stages !== b.stages) return a.stages - b.stages;
-    const ea = a.error.num * b.error.den;
-    const eb = b.error.num * a.error.den;
-    if (ea !== eb) return ea < eb ? -1 : 1;
-    for (let i = 0; i < Math.max(a.flatIds.length, b.flatIds.length); i++) {
-      const x = a.flatIds[i];
-      const y = b.flatIds[i];
-      if (x === undefined) return -1;
-      if (y === undefined) return 1;
-      const c1 = naturalCmp(x[0], y[0]);
-      if (c1) return c1;
-      const c2 = naturalCmp(x[1], y[1]);
-      if (c2) return c2;
-    }
-    return 0;
-  });
+  matches.sort(cmpSolutions);
 
   const total = matches.length;
   return {
     total,
     truncated: total > RESULT_LIMIT,
-    results: matches.slice(0, RESULT_LIMIT),
+    // 仅展开实际返回的前若干条为富对象
+    results: matches.slice(0, RESULT_LIMIT).map((m) => enrichMatch(m, gears)),
   };
 }
 
@@ -297,6 +350,11 @@ module.exports = {
   MAX_STAGES,
   RESULT_LIMIT,
   search,
+  enumerateMatches,
+  enrichMatch,
+  cmpSolutions,
+  cmpIdxs,
+  naturalCmp,
   parseTarget,
   parseTolerance,
   validateGears,

@@ -31,6 +31,29 @@ body {
 .site-header h1 { margin: 0 0 6px; font-size: 26px; }
 .subtitle { margin: 0; color: var(--muted); font-size: 14px; }
 
+.top-nav {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.top-nav a {
+  padding: 5px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+.top-nav a:hover { border-color: #b9c1cc; color: var(--ink); }
+.top-nav a.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+
 main {
   max-width: 900px;
   margin: 0 auto;
@@ -181,4 +204,44 @@ table.pairs th { background: #f0f2f5; font-weight: 600; }
   color: var(--muted);
   font-size: 12px;
   padding: 10px 0 30px;
+}
+
+/* ---------------- 批量装配 ---------------- */
+
+.device-grid-head,
+.device-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr 44px;
+  gap: 10px;
+  align-items: center;
+}
+.device-grid-head {
+  margin: 10px 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.device-row { margin-bottom: 8px; }
+@media (max-width: 640px) {
+  .device-grid-head,
+  .device-row { grid-template-columns: 1fr 1fr; }
+}
+
+.solution.miss { border-color: #e5c07b; background: var(--warn-bg); }
+
+.badge.badge-ok { background: var(--brand); }
+.badge.badge-miss {
+  background: var(--warn);
+}
+
+.unused-panel { margin-top: 18px; }
+.unused-panel h3 { font-size: 14px; margin: 0 0 8px; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fafbfc;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
